@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httpx
+pydantic
+pandas
+numpy
+xgboost
+scikit-learn
+python-dateutil

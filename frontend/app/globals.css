@@ -1,0 +1,68 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f5f7fa;
+}
+
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+select,
+input,
+button {
+  padding: 8px;
+}
+
+.hour-block {
+  margin-bottom: 18px;
+  background: white;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px;
+  text-align: left;
+}
+
+.fast {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.slow {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.neutral {
+  color: #334155;
+}
+
+.error {
+  color: #b91c1c;
+}
