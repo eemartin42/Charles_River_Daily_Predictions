@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -35,14 +36,23 @@ class ExternalDataClient:
                 continue
 
             speed_mph = self._parse_wind_speed_mph(period.get("windSpeed", "0 mph"))
-            wind_deg = self._wind_direction_to_degrees(period.get("windDirection", "N"))
+            wind_compass = (period.get("windDirection") or "N").strip()
+            wind_deg = self._wind_direction_to_degrees(wind_compass)
             hour_key = ts.replace(minute=0, second=0, microsecond=0).isoformat()
+
+            gust_raw = period.get("windGust")
+            if gust_raw is None or gust_raw == "":
+                wind_gust_mph = None
+            else:
+                wind_gust_mph = round(self._parse_wind_speed_mph(str(gust_raw)), 2)
 
             rows.append(
                 {
                     "timestamp": hour_key,
                     "wind_speed": round(speed_mph, 2),
                     "wind_dir": round(wind_deg, 2),
+                    "wind_compass": wind_compass.upper(),
+                    "wind_gust_mph": wind_gust_mph,
                     "flow_rate": round(latest_flow_cfs, 2),
                     "water_temp": float(temp.get(hour_key, 55.0)),
                 }

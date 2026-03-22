@@ -20,6 +20,8 @@ yarn-error.log*
 
 # Local / runtime
 backend/cache_data/
+# QA export from `python -m src.model.geometry.export_densified_geojson`
+backend/data/*_densified.geojson
 .DS_Store
 *.swp
 *.swo

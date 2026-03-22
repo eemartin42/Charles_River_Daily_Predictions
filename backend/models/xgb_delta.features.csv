@@ -1,0 +1,17 @@
+feature_name
+headwind_sq
+tailwind
+crosswind
+flow_rate
+water_temp
+hour_of_day
+boat_class_1x
+boat_class_2x
+boat_class_4x
+boat_class_8+
+sex_men
+sex_women
+weight_class_lightweight
+weight_class_openweight
+direction_downstream
+direction_upstream

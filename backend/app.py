@@ -1,21 +1,42 @@
+import os
 from datetime import date
 from typing import Literal
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.cache.daily_cache import DailyCache
 from src.data.external.external_data_client import ExternalDataClient
 from src.model.environment.load_model import load_delta_model
-from src.predictions.compute_hourly_predictions import compute_hourly_predictions
+from src.model.geometry.river_path import load_river_segments
+from src.predictions.compute_hourly_predictions import RATES, compute_hourly_predictions
+from src.train.train_xgb_delta import ensure_residual_model_files
+
+
+def _cors_allow_origins() -> list[str]:
+    """Local dev defaults plus optional comma-separated CORS_ORIGINS (e.g. https://your-app.vercel.app)."""
+    defaults = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    extra = os.environ.get("CORS_ORIGINS", "").strip()
+    if not extra:
+        return defaults
+    more = [o.strip().rstrip("/") for o in extra.split(",") if o.strip()]
+    # Dedupe while preserving order (defaults first)
+    seen: set[str] = set()
+    out: list[str] = []
+    for o in defaults + more:
+        if o not in seen:
+            seen.add(o)
+            out.append(o)
+    return out
+
 
 app = FastAPI(title="Charles River Daily Split Predictor")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,7 +50,9 @@ delta_model = None
 @app.on_event("startup")
 async def startup_event():
     global delta_model
+    ensure_residual_model_files()
     delta_model = load_delta_model()
+    load_river_segments()
 
 
 @app.get("/predictions")
@@ -39,10 +62,15 @@ async def get_predictions(
     weight_class: Literal["openweight", "lightweight"],
     direction: Literal["upstream", "downstream"],
     query_date: str = Query(default_factory=lambda: date.today().isoformat(), alias="date"),
+    map_rate: int = Query(24, description="Stroke rate used for per-segment map payload"),
 ):
-    # Bump when hourly inputs (e.g. flow projection) change so disk cache does not
-    # serve stale per-hour flow.
-    cache_key = f"v2:{query_date}:{boat_class}:{sex}:{weight_class}:{direction}"
+    if map_rate not in RATES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"map_rate must be one of {RATES}",
+        )
+
+    cache_key = f"v6:{map_rate}:{query_date}:{boat_class}:{sex}:{weight_class}:{direction}"
     cached = daily_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -55,6 +83,7 @@ async def get_predictions(
         direction=direction,
         external_client=external_client,
         delta_model=delta_model,
+        map_rate=map_rate,
     )
 
     all_deltas = [r["delta"] for hour in hourly for r in hour["rows"]]
@@ -67,6 +96,7 @@ async def get_predictions(
             "sex": sex,
             "weight_class": weight_class,
             "direction": direction,
+            "map_rate": map_rate,
             "charles_speed_index": charles_speed_index,
         },
         "hourly": hourly,

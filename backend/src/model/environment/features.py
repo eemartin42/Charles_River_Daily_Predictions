@@ -1,24 +1,26 @@
+import math
+
 from src.model.environment.wind import compute_wind_components
 
+# Legacy fixed headings (optional reference only; segment-based headings preferred)
 UPSTREAM_HEADING = 290.0
 DOWNSTREAM_HEADING = 110.0
 
+MPH_TO_MPS = 0.44704
+
 PHYSICS_CONFIG = {
     "flow_k": 0.003,
+    "flow_cap_mps": 0.3,
     "flow_downstream_asymmetry": 0.7,
-    "temp_neutral_f": 70.0,
-    "temp_c1": 0.08,
+    "temp_neutral_f": 60.0,
+    "temp_c1": 0.1,
     "temp_c2": 0.04,
-    "wind_head_coeff": 0.02,   # m/s per mph-equivalent component
-    "wind_tail_coeff": 0.015,  # m/s per mph-equivalent component
-    "wind_cross_coeff": 0.006, # m/s per mph-equivalent component
-    "interaction_d": 0.2,
     "min_velocity": 0.1,
 }
 
 BOAT_FLOW_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.75, "8+": 0.6}
 BOAT_TEMP_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.8, "8+": 0.7}
-BOAT_WIND_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.75, "8+": 0.6}
+BOAT_WIND_PHYSICS_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.75, "8+": 0.6}
 
 
 def split_to_velocity(split_seconds: float) -> float:
@@ -29,79 +31,78 @@ def velocity_to_split(velocity: float) -> float:
     return 500.0 / max(velocity, PHYSICS_CONFIG["min_velocity"])
 
 
-def flow_to_velocity(flow_cfs: float, k: float = PHYSICS_CONFIG["flow_k"]) -> float:
-    return k * (max(flow_cfs, 0.0) ** 0.5)
-
-
-def compute_flow_velocity_effect(
+def flow_to_velocity(
     flow_cfs: float,
-    direction: str,
-    boat_class: str,
-    asymmetry: float = PHYSICS_CONFIG["flow_downstream_asymmetry"],
+    k: float = PHYSICS_CONFIG["flow_k"],
+    cap_mps: float = PHYSICS_CONFIG["flow_cap_mps"],
 ) -> float:
+    v = k * (max(flow_cfs, 0.0) ** 0.5)
+    return min(v, cap_mps)
+
+
+def apply_temperature(v: float, temp_f: float, boat_class: str) -> float:
+    t_n = PHYSICS_CONFIG["temp_neutral_f"]
+    if temp_f < t_n:
+        factor = 1.0 + PHYSICS_CONFIG["temp_c1"] * ((t_n - temp_f) / 20.0) ** 1.3
+    else:
+        factor = 1.0 - PHYSICS_CONFIG["temp_c2"] * ((temp_f - t_n) / 20.0)
+    scaled = 1.0 + (factor - 1.0) * BOAT_TEMP_FACTOR[boat_class]
+    return v / max(scaled, 0.01)
+
+
+def apply_wind(
+    v: float,
+    headwind_mps: float,
+    crosswind_mps: float,
+    boat_class: str,
+) -> float:
+    """headwind_mps signed along boat axis; crosswind_mps magnitude for penalty."""
+    v_safe = max(v, 1e-6)
+    v_rel = v_safe + max(0.0, headwind_mps)
+    drag_multiplier = 1.0 + 0.03 * (v_rel / v_safe) ** 2
+    tailwind = max(0.0, -headwind_mps)
+    tail_boost = 0.01 * tailwind
+    cross_mag = abs(crosswind_mps)
+    cross_penalty = 0.02 * (cross_mag**1.3)
+    v_after_drag = v / drag_multiplier
+    v_adjusted = v_after_drag + tail_boost - cross_penalty
+    return v_adjusted * BOAT_WIND_PHYSICS_FACTOR[boat_class]
+
+
+def apply_flow(v: float, flow_cfs: float, direction: str, boat_class: str) -> float:
     v_current = flow_to_velocity(flow_cfs)
     if direction == "upstream":
         v_flow = v_current
     else:
-        v_flow = -v_current * asymmetry
-    return v_flow * BOAT_FLOW_FACTOR[boat_class]
-
-
-def temperature_drag_factor(
-    temp_f: float,
-    neutral_f: float = PHYSICS_CONFIG["temp_neutral_f"],
-    c1: float = PHYSICS_CONFIG["temp_c1"],
-    c2: float = PHYSICS_CONFIG["temp_c2"],
-) -> float:
-    if temp_f < neutral_f:
-        return 1.0 + c1 * ((neutral_f - temp_f) / 20.0) ** 1.3
-    return 1.0 - c2 * ((temp_f - neutral_f) / 20.0)
-
-
-def apply_temperature_effect(v_baseline: float, temp_f: float, boat_class: str) -> float:
-    factor = temperature_drag_factor(temp_f)
-    scaled_factor = 1.0 + (factor - 1.0) * BOAT_TEMP_FACTOR[boat_class]
-    return v_baseline / max(scaled_factor, 0.1)
-
-
-def compute_wind_velocity_effect(
-    headwind: float,
-    tailwind: float,
-    crosswind: float,
-    boat_class: str,
-    head_coeff: float = PHYSICS_CONFIG["wind_head_coeff"],
-    tail_coeff: float = PHYSICS_CONFIG["wind_tail_coeff"],
-    cross_coeff: float = PHYSICS_CONFIG["wind_cross_coeff"],
-) -> float:
-    scale = BOAT_WIND_FACTOR[boat_class]
-    # Positive return means velocity penalty; negative means velocity boost.
-    return scale * ((head_coeff * headwind) + (cross_coeff * crosswind) - (tail_coeff * tailwind))
+        v_flow = -PHYSICS_CONFIG["flow_downstream_asymmetry"] * v_current
+    return v - (v_flow * BOAT_FLOW_FACTOR[boat_class])
 
 
 def compute_effective_velocity(
-    split_baseline: float,
-    flow_cfs: float,
+    baseline_split: float,
     temp_f: float,
+    flow_cfs: float,
+    headwind_mps: float,
+    crosswind_mps: float,
     direction: str,
     boat_class: str,
-    headwind: float,
-    tailwind: float,
-    crosswind: float,
-    interaction_d: float = PHYSICS_CONFIG["interaction_d"],
 ) -> float:
-    v_baseline = split_to_velocity(split_baseline)
-    v_flow = compute_flow_velocity_effect(flow_cfs, direction, boat_class)
-    v_temp_adjusted = apply_temperature_effect(v_baseline, temp_f, boat_class)
-    v_wind = compute_wind_velocity_effect(headwind, tailwind, crosswind, boat_class)
+    """Unified pipeline: temperature -> wind -> flow. Wind in m/s."""
+    v = split_to_velocity(baseline_split)
+    v = apply_temperature(v, temp_f, boat_class)
+    v = apply_wind(v, headwind_mps, crosswind_mps, boat_class)
+    v = apply_flow(v, flow_cfs, direction, boat_class)
+    return max(v, PHYSICS_CONFIG["min_velocity"])
 
-    v_effective = v_temp_adjusted - v_flow - v_wind
 
-    if interaction_d > 0.0:
-        v_current = flow_to_velocity(flow_cfs)
-        interaction = interaction_d * v_current * (1.0 / max(v_baseline, 0.1))
-        v_effective -= interaction
-
-    return max(v_effective, PHYSICS_CONFIG["min_velocity"])
+def wind_features_for_river_axis_mps(
+    wind_speed_mph: float,
+    wind_dir_deg: float,
+    river_axis_heading_deg: float,
+) -> dict:
+    """Wind components in m/s along river axis (signed headwind)."""
+    wind_mps = max(0.0, wind_speed_mph) * MPH_TO_MPS
+    return compute_wind_components(wind_mps, wind_dir_deg, river_axis_heading_deg)
 
 
 def get_directional_features(
@@ -111,17 +112,15 @@ def get_directional_features(
     water_temp: float,
     direction: str,
 ) -> dict:
+    """Legacy aggregate using fixed headings (mph wind). Prefer segment-based pipeline."""
     if direction == "upstream":
         river_heading = UPSTREAM_HEADING
-        effective_flow = flow_rate
     else:
         river_heading = DOWNSTREAM_HEADING
-        effective_flow = -flow_rate
-
-    wind = compute_wind_components(wind_speed, wind_dir, river_heading)
+    wind = compute_wind_components(wind_speed * MPH_TO_MPS, wind_dir, river_heading)
     return {
         **wind,
-        "flow_rate": effective_flow,
+        "flow_rate": flow_rate,
         "water_temp": water_temp,
     }
 
@@ -136,3 +135,19 @@ def transform_environment(features: dict) -> dict:
         "water_temp": features["water_temp"],
     }
 
+
+def mean_feature_dict(feature_dicts: list[dict]) -> dict:
+    """Average segment wind/flow/temp fields for XGB input."""
+    if not feature_dicts:
+        return {
+            "headwind": 0.0,
+            "tailwind": 0.0,
+            "crosswind": 0.0,
+            "flow_rate": 0.0,
+            "water_temp": 60.0,
+        }
+    keys = ["headwind", "tailwind", "crosswind", "flow_rate", "water_temp"]
+    out = {}
+    for k in keys:
+        out[k] = sum(d[k] for d in feature_dicts) / len(feature_dicts)
+    return out

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 from xgboost import XGBRegressor
 
@@ -32,6 +34,20 @@ def train_and_save_model(output_path: Path, n_samples: int = 8000) -> None:
     feature_names = X.columns.tolist()
     metadata_path = output_path.with_suffix(".features.csv")
     pd.DataFrame({"feature_name": feature_names}).to_csv(metadata_path, index=False)
+
+
+def ensure_residual_model_files(n_samples: int = 8000) -> None:
+    """Create XGBoost artifact + feature list if missing (e.g. fresh clone)."""
+    json_path = MODELS_DIR / "xgb_delta.json"
+    csv_path = MODELS_DIR / "xgb_delta.features.csv"
+    if json_path.is_file() and csv_path.is_file():
+        return
+    print(
+        "Residual model files missing; training synthetic XGBoost model "
+        f"(this may take ~30s). Writing to {json_path} ..."
+    )
+    train_and_save_model(json_path, n_samples=n_samples)
+    print("Residual model ready.")
 
 
 if __name__ == "__main__":

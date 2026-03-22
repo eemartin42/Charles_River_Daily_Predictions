@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
 import { fetchPredictions, type PredictionResponse } from "./api";
+
+const RiverMap = dynamic(() => import("../components/RiverMap"), { ssr: false });
 
 const BOATS = ["1x", "2x", "4x", "8+"] as const;
 const SEXES = ["men", "women"] as const;
 const WEIGHTS = ["openweight", "lightweight"] as const;
 const DIRECTIONS = ["upstream", "downstream"] as const;
+const MAP_RATES = [18, 20, 22, 24, 26, 28, 30, 32, 34, 36] as const;
 
 function deltaColor(delta: number): string {
   if (delta > 0.5) return "slow";
@@ -21,15 +25,30 @@ function formatSplit(seconds: number): string {
   return `${minutes}:${secs.toFixed(2).padStart(5, "0")}`;
 }
 
+function formatWindGust(gust: number | null | undefined): string {
+  if (gust != null && Number.isFinite(gust)) {
+    return `${gust.toFixed(1)} mph`;
+  }
+  return "Not reported (NWS hourly grid often omits gusts)";
+}
+
 export default function Page() {
   const [boat, setBoat] = useState<(typeof BOATS)[number]>("1x");
   const [sex, setSex] = useState<(typeof SEXES)[number]>("men");
   const [weight, setWeight] = useState<(typeof WEIGHTS)[number]>("openweight");
   const [direction, setDirection] = useState<(typeof DIRECTIONS)[number]>("upstream");
   const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [mapRate, setMapRate] = useState<(typeof MAP_RATES)[number]>(24);
   const [data, setData] = useState<PredictionResponse | null>(null);
+  const [selectedHourIndex, setSelectedHourIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (data?.hourly?.length) {
+      setSelectedHourIndex(0);
+    }
+  }, [data]);
 
   async function onPredict() {
     setLoading(true);
@@ -41,6 +60,7 @@ export default function Page() {
         weight_class: weight,
         direction,
         date,
+        map_rate: String(mapRate),
       });
       setData(payload);
     } catch (err) {
@@ -49,6 +69,9 @@ export default function Page() {
       setLoading(false);
     }
   }
+
+  const selectedHour = data?.hourly?.[selectedHourIndex];
+  const mapsKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
 
   return (
     <main className="container">
@@ -104,6 +127,19 @@ export default function Page() {
           Date
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
+        <label>
+          Map stroke rate
+          <select
+            value={mapRate}
+            onChange={(e) => setMapRate(Number(e.target.value) as (typeof MAP_RATES)[number])}
+          >
+            {MAP_RATES.map((r) => (
+              <option key={r} value={r}>
+                {r} spm
+              </option>
+            ))}
+          </select>
+        </label>
         <button onClick={onPredict} disabled={loading}>
           {loading ? "Predicting..." : "Get Predictions"}
         </button>
@@ -111,18 +147,55 @@ export default function Page() {
 
       {error && <p className="error">{error}</p>}
 
+      {data && selectedHour && (
+        <section className="map-section">
+          <h2>River map — {new Date(selectedHour.timestamp).toLocaleString()}</h2>
+          <RiverMap
+            segments={selectedHour.segments ?? []}
+            windSpeedMph={selectedHour.wind_speed}
+            windDirDeg={selectedHour.wind_dir}
+            mapRate={data.meta.map_rate ?? mapRate}
+            apiKey={mapsKey}
+          />
+        </section>
+      )}
+
       {data && (
         <section>
           <p>
             Charles Speed Index: <strong>{data.meta.charles_speed_index}s</strong>
+            {data.meta.map_rate != null && (
+              <>
+                {" "}
+                | Map rate: <strong>{data.meta.map_rate} spm</strong>
+              </>
+            )}
           </p>
-          {data.hourly.map((hour) => (
-            <div key={hour.timestamp} className="hour-block">
+          <p className="hint">Click an hour block to sync the map above.</p>
+          {data.hourly.map((hour, i) => (
+            <div
+              key={hour.timestamp}
+              className={`hour-block ${i === selectedHourIndex ? "hour-selected" : ""}`}
+              onClick={() => setSelectedHourIndex(i)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setSelectedHourIndex(i);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+            >
               <h3>{new Date(hour.timestamp).toLocaleString()}</h3>
-              <p>
-                Water Temp: <strong>{hour.water_temp.toFixed(1)}F</strong> | Flow Rate:{" "}
-                <strong>{hour.flow_rate.toFixed(0)} cfs</strong> | Wind Speed:{" "}
-                <strong>{hour.wind_speed.toFixed(1)} mph</strong>
+              <p className="hour-conditions">
+                Water Temp: <strong>{hour.water_temp.toFixed(1)}°F</strong> | Flow:{" "}
+                <strong>{hour.flow_rate.toFixed(0)} cfs</strong>
+                <br />
+                Wind: <strong>{hour.wind_speed.toFixed(1)} mph</strong> from{" "}
+                <strong>{hour.wind_compass ?? "?"}</strong> (
+                <strong>{Number(hour.wind_dir ?? 0).toFixed(0)}°</strong> from N)
+                <br />
+                Gusts: <strong>{formatWindGust(hour.wind_gust_mph)}</strong>
               </p>
               <table>
                 <thead>

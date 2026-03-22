@@ -1,0 +1,44 @@
+{
+  "type": "Feature",
+  "properties": {
+    "name": "Charles River Rowing Stretch",
+    "note": "Polyline order: Watertown Dam (upstream/west) toward Longfellow Bridge (downstream/east). [lng, lat]. Densify at runtime via RIVER_DENSIFY_STEPS.",
+    "landmarks": [
+      { "name": "Watertown Dam", "coord_index": 0 },
+      { "name": "Eliot Bridge", "coord_index": 7 },
+      { "name": "Weeks Footbridge", "coord_index": 10 },
+      { "name": "BU Bridge", "coord_index": 14 },
+      { "name": "Mass Ave Bridge", "coord_index": 18 },
+      { "name": "Longfellow Bridge", "coord_index": 23 }
+    ]
+  },
+  "geometry": {
+    "type": "LineString",
+    "coordinates": [
+      [-71.1845, 42.3678],
+      [-71.178, 42.368],
+      [-71.1705, 42.3685],
+      [-71.162, 42.369],
+      [-71.15, 42.3695],
+      [-71.14, 42.3698],
+      [-71.132, 42.3697],
+      [-71.1256, 42.3696],
+      [-71.121, 42.3685],
+      [-71.116, 42.3675],
+      [-71.1105, 42.3668],
+      [-71.106, 42.3665],
+      [-71.1015, 42.3662],
+      [-71.097, 42.366],
+      [-71.0925, 42.3659],
+      [-71.088, 42.3658],
+      [-71.0835, 42.3657],
+      [-71.079, 42.3657],
+      [-71.0745, 42.3658],
+      [-71.0705, 42.366],
+      [-71.0665, 42.3665],
+      [-71.0635, 42.3672],
+      [-71.0605, 42.3682],
+      [-71.0585, 42.369]
+    ]
+  }
+}

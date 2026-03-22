@@ -8,6 +8,7 @@
     "start": "next start -p 3000"
   },
   "dependencies": {
+    "@react-google-maps/api": "^2.20.6",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"

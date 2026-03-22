@@ -37,6 +37,61 @@ button {
   border-radius: 8px;
 }
 
+.hour-conditions {
+  line-height: 1.55;
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #334155;
+}
+
+.hour-selected {
+  outline: 3px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.hint {
+  font-size: 14px;
+  color: #64748b;
+  margin-bottom: 12px;
+}
+
+.map-section {
+  margin-bottom: 24px;
+}
+
+.map-section h2 {
+  font-size: 1.1rem;
+  margin-bottom: 8px;
+}
+
+.map-wrap {
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.map-caption {
+  font-size: 13px;
+  color: #475569;
+  margin: 0 0 8px 0;
+  line-height: 1.45;
+}
+
+.map-placeholder {
+  padding: 24px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 14px;
+}
+
+.map-info {
+  font-size: 13px;
+  line-height: 1.45;
+  max-width: 220px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
