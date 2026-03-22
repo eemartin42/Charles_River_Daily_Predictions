@@ -56,3 +56,48 @@ export async function fetchPredictions(params: {
   }
   return response.json();
 }
+
+export type SegmentRateRow = {
+  rate: number;
+  baseline: number;
+  adjusted: number;
+  delta: number;
+};
+
+export type SegmentRatesResponse = {
+  segment_index: number;
+  headwind_mps: number;
+  crosswind_mps: number;
+  tailwind_mps: number;
+  rows: SegmentRateRow[];
+  wind_speed: number;
+  wind_dir: number;
+  wind_compass: string | null | undefined;
+};
+
+export async function fetchSegmentRateRows(params: {
+  boat_class: string;
+  sex: string;
+  weight_class: string;
+  direction: string;
+  date: string;
+  hour_timestamp: string;
+  segment_index: number;
+}): Promise<SegmentRatesResponse> {
+  const q = new URLSearchParams({
+    boat_class: params.boat_class,
+    sex: params.sex,
+    weight_class: params.weight_class,
+    direction: params.direction,
+    date: params.date,
+    hour_timestamp: params.hour_timestamp,
+    segment_index: String(params.segment_index),
+  });
+  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+  const response = await fetch(`${baseUrl}/predictions/segment-rates?${q}`, { cache: "no-store" });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Failed to fetch segment rates");
+  }
+  return response.json();
+}

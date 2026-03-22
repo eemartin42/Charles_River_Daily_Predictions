@@ -1,4 +1,5 @@
 import math
+import os
 
 from src.model.environment.wind import compute_wind_components
 
@@ -8,11 +9,39 @@ DOWNSTREAM_HEADING = 110.0
 
 MPH_TO_MPS = 0.44704
 
+def _flow_spatial_weight_min_from_env() -> float | None:
+    """
+    Basin (Longfellow) end: river-current effect from discharge scales to this fraction of the
+    Watertown-dam end. Empty / unset = uniform current (legacy). Default ~0.28 if unset.
+    """
+    raw = os.environ.get("FLOW_SPATIAL_WEIGHT_MIN", "0.28").strip()
+    if raw == "":
+        return None
+    try:
+        v = float(raw)
+        return max(0.0, min(1.0, v))
+    except ValueError:
+        return 0.28
+
+
+def flow_spatial_scale_for_segment(segment_index: int, num_segments: int) -> float:
+    """
+    USGS gives one cfs for the reach; we approximate stronger current near the dam and weaker
+    toward the tidal basin by scaling the derived current speed. Polyline order is
+    Watertown → Longfellow (see GeoJSON / README): index 0 = dam side, last = basin.
+    """
+    w_min = _flow_spatial_weight_min_from_env()
+    if w_min is None or num_segments <= 1:
+        return 1.0
+    t = segment_index / (num_segments - 1)
+    return 1.0 - (1.0 - w_min) * t
+
+
 PHYSICS_CONFIG = {
     "flow_k": 0.003,
     "flow_cap_mps": 0.3,
     "flow_downstream_asymmetry": 0.7,
-    "temp_neutral_f": 60.0,
+    "temp_neutral_f": 70.0,
     "temp_c1": 0.1,
     "temp_c2": 0.04,
     "min_velocity": 0.1,
@@ -20,6 +49,8 @@ PHYSICS_CONFIG = {
 
 BOAT_FLOW_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.75, "8+": 0.6}
 BOAT_TEMP_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.8, "8+": 0.7}
+# Wind: fraction of wind-induced delta (vs pre-wind v) that is applied. Larger shells feel less
+# proportional aero effect; must NOT scale absolute velocity (that inverted 8+ vs 1x ordering).
 BOAT_WIND_PHYSICS_FACTOR = {"1x": 1.0, "2x": 0.9, "4x": 0.75, "8+": 0.6}
 
 
@@ -66,11 +97,22 @@ def apply_wind(
     cross_penalty = 0.02 * (cross_mag**1.3)
     v_after_drag = v / drag_multiplier
     v_adjusted = v_after_drag + tail_boost - cross_penalty
-    return v_adjusted * BOAT_WIND_PHYSICS_FACTOR[boat_class]
+    sensitivity = BOAT_WIND_PHYSICS_FACTOR[boat_class]
+    # Blend toward wind-adjusted v so hull ordering from baseline is preserved (see module doc).
+    return v + sensitivity * (v_adjusted - v)
 
 
-def apply_flow(v: float, flow_cfs: float, direction: str, boat_class: str) -> float:
-    v_current = flow_to_velocity(flow_cfs)
+def apply_flow(
+    v: float,
+    flow_cfs: float,
+    direction: str,
+    boat_class: str,
+    *,
+    flow_spatial_scale: float = 1.0,
+) -> float:
+    """flow_spatial_scale tapers apparent current from dam toward basin (see flow_spatial_scale_for_segment)."""
+    scale = max(0.0, min(1.0, flow_spatial_scale))
+    v_current = flow_to_velocity(flow_cfs) * scale
     if direction == "upstream":
         v_flow = v_current
     else:
@@ -86,12 +128,14 @@ def compute_effective_velocity(
     crosswind_mps: float,
     direction: str,
     boat_class: str,
+    *,
+    flow_spatial_scale: float = 1.0,
 ) -> float:
     """Unified pipeline: temperature -> wind -> flow. Wind in m/s."""
     v = split_to_velocity(baseline_split)
     v = apply_temperature(v, temp_f, boat_class)
     v = apply_wind(v, headwind_mps, crosswind_mps, boat_class)
-    v = apply_flow(v, flow_cfs, direction, boat_class)
+    v = apply_flow(v, flow_cfs, direction, boat_class, flow_spatial_scale=flow_spatial_scale)
     return max(v, PHYSICS_CONFIG["min_velocity"])
 
 

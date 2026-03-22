@@ -70,6 +70,30 @@ function deltaToColor(delta: number, minD: number, maxD: number): string {
   return `rgb(${r},${g},72)`;
 }
 
+/** Blend delta heat color with direction accent so upstream vs downstream are visually distinct. */
+function deltaColorWithDirection(
+  delta: number,
+  minD: number,
+  maxD: number,
+  direction: "upstream" | "downstream",
+  mix = 0.22
+): string {
+  const base = deltaToColor(delta, minD, maxD);
+  const m = base.match(/rgb\((\d+),(\d+),(\d+)\)/);
+  if (!m) return base;
+  const r0 = Number(m[1]);
+  const g0 = Number(m[2]);
+  const b0 = Number(m[3]);
+  const accent =
+    direction === "upstream"
+      ? [37, 99, 235] // blue
+      : [234, 88, 12]; // orange
+  const r = Math.round(r0 * (1 - mix) + accent[0] * mix);
+  const g = Math.round(g0 * (1 - mix) + accent[1] * mix);
+  const b = Math.round(b0 * (1 - mix) + accent[2] * mix);
+  return `rgb(${r},${g},${b})`;
+}
+
 function formatSplitSeconds(seconds: number): string {
   const s = Math.max(0, seconds);
   const m = Math.floor(s / 60);
@@ -90,12 +114,26 @@ type Props = {
   segments: MapSegment[];
   windSpeedMph: number;
   windDirDeg: number;
+  windCompass?: string;
   mapRate: number;
   apiKey: string;
+  direction: "upstream" | "downstream";
+  /** Fired with backend segment_index when user clicks a river segment polyline. */
+  onSegmentSelect?: (segmentIndex: number) => void;
 };
 
-export default function RiverMap({ segments, windSpeedMph, windDirDeg, mapRate, apiKey }: Props) {
+export default function RiverMap({
+  segments,
+  windSpeedMph,
+  windDirDeg,
+  windCompass,
+  mapRate,
+  apiKey,
+  direction,
+  onSegmentSelect,
+}: Props) {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [hoverArrowSegIdx, setHoverArrowSegIdx] = useState<number | null>(null);
 
   const { isLoaded, loadError } = useJsApiLoader({
     id: "charles-river-map",
@@ -162,9 +200,11 @@ export default function RiverMap({ segments, windSpeedMph, windDirDeg, mapRate, 
   return (
     <div className="map-wrap">
       <p className="map-caption">
-        Map stroke rate: <strong>{mapRate}</strong> spm — segment colors: red = slower vs baseline, green =
-        faster. Arrows show <strong>wind toward</strong> (downwind), scaled by wind speed. One arrow every{" "}
-        {WIND_ARROW_EVERY} segments at segment midpoints.
+        Map stroke rate: <strong>{mapRate}</strong> spm — <strong>{direction}</strong>: track tint{" "}
+        {direction === "upstream" ? "(blue blend)" : "(orange blend)"} on top of red/green = slower/faster vs
+        baseline. Arrows: <strong>wind toward</strong> (downwind); hover an arrow for split + wind.{" "}
+        <strong>Click a segment</strong> to show stroke-rate tables for that location. One arrow every{" "}
+        {WIND_ARROW_EVERY} segments.
       </p>
       <GoogleMap mapContainerStyle={mapContainerStyle} center={center} zoom={13}>
         {segments.map((seg, i) => (
@@ -172,12 +212,16 @@ export default function RiverMap({ segments, windSpeedMph, windDirDeg, mapRate, 
             key={seg.segment_index}
             path={seg.path}
             options={{
-              strokeColor: deltaToColor(seg.delta, minD, maxD),
+              strokeColor: deltaColorWithDirection(seg.delta, minD, maxD, direction),
               strokeWeight: 5,
               strokeOpacity: 0.92,
               clickable: true,
             }}
-            onClick={() => setActiveIdx(i)}
+            onClick={() => {
+              setHoverArrowSegIdx(null);
+              setActiveIdx(i);
+              onSegmentSelect?.(seg.segment_index);
+            }}
           />
         ))}
         {segments.map((seg, i) =>
@@ -185,6 +229,8 @@ export default function RiverMap({ segments, windSpeedMph, windDirDeg, mapRate, 
             <Marker
               key={`wind-${seg.segment_index}`}
               position={{ lat: seg.mid_lat, lng: seg.mid_lng }}
+              onMouseOver={() => setHoverArrowSegIdx(i)}
+              onMouseOut={() => setHoverArrowSegIdx((prev) => (prev === i ? null : prev))}
               icon={{
                 path: arrowPath,
                 scale: 3 * arrowScale,
@@ -197,31 +243,64 @@ export default function RiverMap({ segments, windSpeedMph, windDirDeg, mapRate, 
             />
           ) : null
         )}
-        {activeIdx != null && segments[activeIdx] && (
-          <InfoWindow
-            position={{
-              lat: segments[activeIdx].mid_lat,
-              lng: segments[activeIdx].mid_lng,
-            }}
-            onCloseClick={() => setActiveIdx(null)}
-          >
-            <div className="map-info">
-              <strong>Segment {segments[activeIdx].segment_index}</strong>
-              <br />
-              River heading (smoothed display): {headingAtSegmentStart(activeIdx).toFixed(1)}° | API:{" "}
-              {segments[activeIdx].heading_deg.toFixed(1)}°
-              <br />
-              Headwind: {segments[activeIdx].headwind_mps.toFixed(2)} m/s | Cross:{" "}
-              {segments[activeIdx].crosswind_mps.toFixed(2)} m/s
-              <br />
-              Baseline: {formatSplitSeconds(segments[activeIdx].baseline_split)} | Adjusted:{" "}
-              {formatSplitSeconds(segments[activeIdx].adjusted_split)}
-              <br />
-              Δ: {segments[activeIdx].delta >= 0 ? "+" : ""}
-              {segments[activeIdx].delta.toFixed(2)} s
-            </div>
-          </InfoWindow>
-        )}
+        {(() => {
+          const showIdx = hoverArrowSegIdx ?? activeIdx;
+          const seg = showIdx != null ? segments[showIdx] : null;
+          if (!seg || showIdx == null) return null;
+          const isHover = hoverArrowSegIdx != null;
+          return (
+            <InfoWindow
+              position={{
+                lat: seg.mid_lat,
+                lng: seg.mid_lng,
+              }}
+              onCloseClick={() => {
+                setActiveIdx(null);
+                setHoverArrowSegIdx(null);
+              }}
+              options={{ disableAutoPan: isHover }}
+            >
+              <div className="map-info">
+                {isHover ? (
+                  <>
+                    <strong>Wind arrow — segment {seg.segment_index}</strong>
+                    <br />
+                    Predicted split: <strong>{formatSplitSeconds(seg.adjusted_split)}</strong> / 500m
+                    <br />
+                    Δ vs baseline: {seg.delta >= 0 ? "+" : ""}
+                    {seg.delta.toFixed(2)} s
+                    <br />
+                    Wind: <strong>{windSpeedMph.toFixed(1)} mph</strong>
+                    {windCompass != null && windCompass !== "" ? (
+                      <>
+                        {" "}
+                        from <strong>{windCompass}</strong>
+                      </>
+                    ) : null}{" "}
+                    ({windDirDeg.toFixed(0)}° from N, meteorological)
+                    <br />
+                    <span className="map-info-muted">Hover leaves this tip; click a colored segment for full detail.</span>
+                  </>
+                ) : (
+                  <>
+                    <strong>Segment {seg.segment_index}</strong>
+                    <br />
+                    River heading (smoothed display): {headingAtSegmentStart(showIdx).toFixed(1)}° | API:{" "}
+                    {seg.heading_deg.toFixed(1)}°
+                    <br />
+                    Headwind: {seg.headwind_mps.toFixed(2)} m/s | Cross: {seg.crosswind_mps.toFixed(2)} m/s
+                    <br />
+                    Baseline: {formatSplitSeconds(seg.baseline_split)} | Adjusted:{" "}
+                    {formatSplitSeconds(seg.adjusted_split)}
+                    <br />
+                    Δ: {seg.delta >= 0 ? "+" : ""}
+                    {seg.delta.toFixed(2)} s
+                  </>
+                )}
+              </div>
+            </InfoWindow>
+          );
+        })()}
       </GoogleMap>
     </div>
   );

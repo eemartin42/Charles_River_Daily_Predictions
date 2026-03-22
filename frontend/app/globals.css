@@ -89,7 +89,14 @@ button {
 .map-info {
   font-size: 13px;
   line-height: 1.45;
-  max-width: 220px;
+  max-width: 280px;
+}
+
+.map-info-muted {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 6px;
+  display: block;
 }
 
 table {
@@ -120,4 +127,28 @@ td {
 
 .error {
   color: #b91c1c;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+.link-button:hover {
+  color: #1d4ed8;
+}
+
+.map-segment-hint {
+  margin-top: 8px;
+}
+
+.segment-table-note {
+  margin-top: 8px;
+  border-left: 3px solid #3b82f6;
+  padding-left: 10px;
 }

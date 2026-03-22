@@ -44,7 +44,9 @@ API: `http://127.0.0.1:8000` — use `GET /predictions` with query params (see b
 
 Paths to the trained model and daily cache are resolved from the `backend/` package directory, so this works regardless of your shell working directory.
 
-**River geometry:** [`backend/data/charles_river_rowing.geojson`](backend/data/charles_river_rowing.geojson) is ordered **upstream (Watertown Dam) → downstream (Longfellow Bridge)** along the polyline. The API **densifies** that line (linear interpolation in lng/lat) for smoother headings and more map segments. Set `RIVER_DENSIFY_STEPS` (default `5`; use `0` or `1` to use the sparse file vertices only). Higher values produce more segments. Segment headings use a **latitude-corrected** bearing plus optional **`RIVER_HEADING_SMOOTH_WINDOW`** (default `4`) so wind decomposition matches the river on E–W sections.
+**River geometry:** [`backend/data/charles_river_rowing.geojson`](backend/data/charles_river_rowing.geojson) is ordered **upstream (Watertown Dam) → downstream (Longfellow Bridge)** along the polyline (`[lng, lat]`). The committed centerline is built from **OpenStreetMap** (waterway, ODbL) for a water-following path; regenerate or refine with [`backend/scripts/build_charles_river_geojson_from_osm.py`](backend/scripts/build_charles_river_geojson_from_osm.py) or by **manual satellite trace** in [geojson.io](https://geojson.io) (draw on satellite, export GeoJSON, keep the same `Feature` + `LineString` shape). After changing geometry, **bump the prediction cache prefix** in `backend/app.py` and restart the API.
+
+**Densification:** `RIVER_DENSIFY_STEPS` defaults to **`1`** (no extra subdivision) because the OSM line is already dense. Use **`3`–`5`** if you switch to a sparse polyline. **`0`** or **`1`** = use canonical vertices only. Segment headings use a **latitude-corrected** bearing plus **`RIVER_HEADING_SMOOTH_WINDOW`** (default `4`).
 
 ### 2. Frontend
 
@@ -93,37 +95,21 @@ GET /predictions?boat_class=1x&sex=men&weight_class=openweight&direction=upstrea
 ## Data sources (configured in code)
 
 - Wind: `GET https://api.weather.gov/points/42.37,-71.06` → hourly forecast
-- Flow: USGS site `01104500`, parameter `00060` (cfs)
-- Water temp: same site, parameter `00010` (when published)
+- Flow: USGS **Charles River at Waltham** `01104500`, parameter `00060` (cfs)
+- Water temp: USGS **Fresh Pond gate house, Cambridge** `422302071083801`, parameter `00010` (°C), converted to **°F** — the Waltham Charles discharge site does not publish instantaneous water temperature in NWIS IV; Fresh Pond is a nearby active gauge in the same basin. Override with env **`USGS_WATER_TEMP_SITE`** (NWIS site id) if you prefer another MA station (e.g. Stony Brook at Waltham `01104460`). Each forecast hour uses the **nearest observation in time** (or latest reading).
 
 **Flow:** There is no forecast; the API uses the **latest observed discharge** for **every** hour in the selected forecast day so physics stays consistent.
+
+**Flow along the course:** Public APIs (USGS NWIS, etc.) give **one discharge number** at the Waltham gage—not a velocity field along the river. Hydrodynamic models (HEC-RAS, estuary models) could estimate spatial variation but need calibration and aren’t wired here. Instead, physics applies a **simple linear taper** along the curated polyline (**Watertown Dam → Longfellow**): the derived current speed from cfs is **full strength near the dam** (segment index 0) and scales down toward the **basin end** (last segment). The basin end weight defaults to **28%** of the dam end (`FLOW_SPATIAL_WEIGHT_MIN=0.28`). Set **`FLOW_SPATIAL_WEIGHT_MIN=`** (empty) on the API process to disable the taper and use uniform current everywhere (legacy behavior).
 
 ## Model overview
 
 1. `baseline_split(rate, …)` from parametric curves (α + β/rate + γ×rate) with parameters per category/boat.
-2. For each river segment, wind vs **local segment heading** (downstream polyline order; upstream flips axis by 180°). Per segment: `split → velocity` → **temperature** → **wind** → **capped flow** → effective velocity → segment split. **Table** uses length-weighted mean velocity across segments, then `500/v̄`.
+2. For each river segment, wind vs **local segment heading** (downstream polyline order; upstream flips axis by 180°). Per segment: `split → velocity` → **temperature** → **wind** → **capped flow** (tapered along the reach from dam to basin; see **Flow along the course** above) → effective velocity → segment split. **Table** uses length-weighted mean velocity across segments, then `500/v̄`. Wind uses **hull-size sensitivity** on the wind-induced speed change (not a multiplier on absolute speed) so **8+ stays faster than 1x** under the same conditions.
 3. XGBoost adds a small **residual** in seconds (trained on synthetic data) using **mean** head/tail/cross wind features across segments.
 
 Tunable physics constants live in [`backend/src/model/environment/features.py`](backend/src/model/environment/features.py).
 
-## Publishing to GitHub
-
-1. Create a new empty repository on GitHub (no README/license if you want a clean first push).
-
-2. From the **project root** (this folder):
-
-```bash
-git init
-git add .
-git commit -m "Initial commit: Charles River split predictor"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
-```
-
-3. **Do not commit secrets** — this project uses public weather/USGS endpoints only.
-
-A [`.gitignore`](.gitignore) is included for virtualenvs, `node_modules`, caches, and local artifacts.
 
 ## License
 

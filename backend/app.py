@@ -9,7 +9,11 @@ from src.cache.daily_cache import DailyCache
 from src.data.external.external_data_client import ExternalDataClient
 from src.model.environment.load_model import load_delta_model
 from src.model.geometry.river_path import load_river_segments
-from src.predictions.compute_hourly_predictions import RATES, compute_hourly_predictions
+from src.predictions.compute_hourly_predictions import (
+    RATES,
+    compute_hourly_predictions,
+    compute_rate_rows_for_segment,
+)
 from src.train.train_xgb_delta import ensure_residual_model_files
 
 
@@ -70,7 +74,7 @@ async def get_predictions(
             detail=f"map_rate must be one of {RATES}",
         )
 
-    cache_key = f"v6:{map_rate}:{query_date}:{boat_class}:{sex}:{weight_class}:{direction}"
+    cache_key = f"v12:{map_rate}:{query_date}:{boat_class}:{sex}:{weight_class}:{direction}"
     cached = daily_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -102,6 +106,61 @@ async def get_predictions(
         "hourly": hourly,
     }
     daily_cache.set(cache_key, payload)
+    return payload
+
+
+def _find_hour_row(hourly_conditions: list[dict], hour_timestamp: str) -> dict | None:
+    """Match API hour timestamp to a conditions row (flexible ISO equality)."""
+    from dateutil import parser as date_parser
+
+    target = None
+    try:
+        target = date_parser.isoparse(hour_timestamp.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        pass
+    for row in hourly_conditions:
+        ts = row.get("timestamp")
+        if ts == hour_timestamp:
+            return row
+        if target is not None and ts is not None:
+            try:
+                r = date_parser.isoparse(str(ts).replace("Z", "+00:00"))
+                if r == target:
+                    return row
+            except (ValueError, TypeError):
+                continue
+    return None
+
+
+@app.get("/predictions/segment-rates")
+async def get_segment_rates(
+    boat_class: Literal["1x", "2x", "4x", "8+"],
+    sex: Literal["men", "women"],
+    weight_class: Literal["openweight", "lightweight"],
+    direction: Literal["upstream", "downstream"],
+    query_date: str = Query(..., alias="date"),
+    hour_timestamp: str = Query(..., description="ISO timestamp matching hourly[].timestamp"),
+    segment_index: int = Query(..., ge=0),
+):
+    """Per-segment stroke-rate table with segment-local wind decomposition and residual."""
+    hourly_conditions = await external_client.fetch_hourly_conditions(query_date)
+    row = _find_hour_row(hourly_conditions, hour_timestamp)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hour not found for date/timestamp")
+
+    try:
+        payload = compute_rate_rows_for_segment(
+            hour_row=row,
+            segment_index=segment_index,
+            boat_class=boat_class,
+            sex=sex,
+            weight_class=weight_class,
+            direction=direction,
+            delta_model=delta_model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
     return payload
 
 

@@ -36,12 +36,15 @@ def densify_path(coords: list[list[float]], steps: int) -> list[list[float]]:
 
 
 def parse_densify_steps_from_env() -> int:
-    """Default 5; 0 or 1 disables densification (use raw coords)."""
+    """Default 1 (no extra subdivision) for dense OSM centerlines; 0 or 1 = raw vertices only.
+
+    Use RIVER_DENSIFY_STEPS=3–5 if you replace the GeoJSON with a sparse hand-drawn polyline.
+    """
     import os
 
-    raw = os.environ.get("RIVER_DENSIFY_STEPS", "5").strip()
+    raw = os.environ.get("RIVER_DENSIFY_STEPS", "1").strip()
     try:
         n = int(raw)
     except ValueError:
-        return 5
+        return 1
     return max(0, n)

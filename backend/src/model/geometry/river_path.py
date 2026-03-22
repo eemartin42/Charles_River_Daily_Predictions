@@ -59,7 +59,7 @@ def _segment_heading_geographic(lat1: float, lon1: float, lat2: float, lon2: flo
 
 def parse_heading_smooth_window_from_env() -> int:
     """Vertices on each side to include when smoothing segment axis (default 4). 0 = per-leg heading only."""
-    raw = os.environ.get("RIVER_HEADING_SMOOTH_WINDOW", "4").strip()
+    raw = os.environ.get("RIVER_HEADING_SMOOTH_WINDOW", "10").strip()
     try:
         return max(0, int(raw))
     except ValueError:

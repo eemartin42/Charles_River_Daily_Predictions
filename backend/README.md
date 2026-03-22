@@ -45,17 +45,38 @@ uvicorn app:app --reload --port 8000
 
 Segment headings and map polylines come from [`data/charles_river_rowing.geojson`](data/charles_river_rowing.geojson). The **canonical** vertices run **upstream (Watertown Dam) → downstream (Longfellow Bridge)** along the `LineString` order (`[lng, lat]`).
 
-- **`RIVER_DENSIFY_STEPS`** — subdivide each leg with linear interpolation (default **`5`**). **`0`** or **`1`** means no extra subdivision (use the sparse GeoJSON vertices only). More steps → more segments and smoother headings on bends.
-- **`RIVER_HEADING_SMOOTH_WINDOW`** — when building each segment’s downstream axis for wind/physics, use a chord from vertex `i−W` to `i+W` (default **`4`**; **`0`** = per-leg geographic heading only). Headings use **longitude scaled by cos(latitude)** so east–west legs are not skewed.
-- The server caches loaded segments by **GeoJSON file mtime/size** and this step count; editing the file or changing the env var requires an **API restart** to pick up changes in typical deployments.
+**Editing / regenerating**
 
-Optional: from `backend/`, run `python -m src.model.geometry.export_densified_geojson` to write a densified GeoJSON next to the canonical file for QGIS / geojson.io QA.
+1. **Manual satellite trace (recommended for fine control):** In [geojson.io](https://geojson.io) (satellite basemap), digitize a dense centerline, export GeoJSON, and replace `data/charles_river_rowing.geojson` with a `Feature` whose `geometry.type` is `LineString` and `coordinates` are `[lng, lat]` in upstream→downstream order. Update `properties.landmarks` `coord_index` values if you keep them.
+2. **Rebuild from OpenStreetMap:** Download Overpass JSON, then run the merge script:
+
+   ```bash
+   cd backend
+   curl -sS -X POST https://overpass-api.de/api/interpreter \
+     --data-binary @scripts/overpass_charles_river.txt \
+     -o data/osm_charles_overpass.json
+   python scripts/build_charles_river_geojson_from_osm.py
+   ```
+
+3. After shipping new geometry, bump the **`v7`** (or current) cache prefix in [`app.py`](app.py) so `cache_data/` does not return stale segment payloads.
+
+**Environment**
+
+- **`RIVER_DENSIFY_STEPS`** — default **`1`** (dense OSM line: no extra subdivision). **`0`** or **`1`** = canonical vertices only. Use **`3`–`5`** for a sparse hand-drawn line. More steps → more segments.
+- **`RIVER_HEADING_SMOOTH_WINDOW`** — chord from vertex `i−W` to `i+W` (default **`4`**; **`0`** = per-leg heading only). Headings use **longitude scaled by cos(latitude)**.
+- The server caches segments by **GeoJSON mtime/size** and env knobs; **restart** the API after edits.
+
+Optional: `python -m src.model.geometry.export_densified_geojson` writes a QA GeoJSON (gitignored `*_densified.geojson`).
 
 ### Query params
 
 - `map_rate` — stroke rate (spm) used for per-segment payloads in each hour (`18`–`36`, same set as the table). Default `24`.
 
+- **`GET /predictions/segment-rates`** — same query params as `/predictions` (`date`, `boat_class`, `sex`, `weight_class`, `direction`) plus **`hour_timestamp`** (ISO string matching an hour from the forecast) and **`segment_index`** (integer, river segment index). Returns all stroke-rate rows for that segment with **segment-local** wind decomposition and XGBoost residual (not cached; used when the map UI focuses on one segment).
+
 Daily responses are cached under `cache_data/` (gitignored).
+
+**USGS water temperature:** Flow remains **01104500** (Charles at Waltham). Default water-temp gauge is **422302071083801** (Fresh Pond, Cambridge) because the Waltham site does not serve parameter `00010` in IV. Set **`USGS_WATER_TEMP_SITE`** to another NWIS site id if needed.
 
 ## CORS
 
